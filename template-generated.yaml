@@ -1,0 +1,119 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: AWS::Serverless-2016-10-31
+Description: Homework SNS file
+Resources:
+  router:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: router.router_handler
+      Runtime: python3.6
+      Description: Lambda za analiziranje poruke sa /messages
+      CodeUri: s3://djordje-test-sam/a9a5066b0ac608eec410772f4cf2276d
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          Resource: '*'
+      Events:
+        MyAPIGateway:
+          Type: Api
+          Properties: null
+          Path: /message
+          Method: GET
+  hbprocessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: hb_processor.hb_processor_handler
+      Runtime: python3.6
+      Description: Lambda za citanje iz hb_message_processing_queue i upisivanje u
+        parsed_messages
+      CodeUri: s3://djordje-test-sam/a9a5066b0ac608eec410772f4cf2276d
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          - sqs:GetQueueAttributes
+          - sqs:GetQueueUrl
+          - sqs:ListDeadLetterSourceQueues
+          - sqs:ListQueues
+          Resource: '*'
+      Events:
+        MySQSEvent: null
+        Type: SQS
+        Properties:
+          Queue:
+            Fn::GetAtt:
+            - hb_message_processing_queue
+            - Arn
+          BatchSize: 1
+  nlbprocessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: nlb_processor.nlb_processor_handler
+      Runtime: python3.6
+      Description: Lambda za citanje iz nlb_message_processing_queue i upisivanje
+        u parsed_messages
+      CodeUri: s3://djordje-test-sam/a9a5066b0ac608eec410772f4cf2276d
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - sqs:SendMessage
+          - sqs:GetQueueAttributes
+          - sqs:GetQueueUrl
+          - sqs:ListDeadLetterSourceQueues
+          - sqs:ListQueues
+          Resource: '*'
+      Events:
+        MySQSEvent: null
+        Type: sqs
+        Properties:
+          Queue:
+            Fn::GetAtt:
+            - nlb_message_processing_queue
+            - Arn
+          BatchSize: 1
+  transactioncreator:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: transaction_creator.transaction_creator_handler
+      Runtime: python3.6
+      Description: Lambda za citanje iz parsed_messages i upisivanje u dynamodb
+      CodeUri: s3://djordje-test-sam/a9a5066b0ac608eec410772f4cf2276d
+      Policies:
+      - Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Action:
+          - sqs:GetQueueAttributes
+          - sqs:GetQueueUrl
+          - sqs:ListDeadLetterSourceQueues
+          - sqs:ListQueues
+          Resource: '*'
+      Events:
+        MySQSEvent: null
+        Type: SQS
+        Properties:
+          Queue:
+            Fn::GetAtt:
+            - parsed_messages
+            - Arn
+          BatchSize: 1
+  retriever:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: retriever.retriever_handler
+      Runtime: python3.6
+      Description: Lambda za citanje iz dynamodb i vracanje u /messages
+      CodeUri: s3://djordje-test-sam/a9a5066b0ac608eec410772f4cf2276d
+  hb_message_processing_queue:
+    Type: AWS::SQS::Queue
+  nlb_message_processing_queue:
+    Type: AWS::SQS::Queue
+  parsed_messages:
+    Type: AWS::SQS::Queue
