@@ -1,33 +1,32 @@
 #SAM TEMPLATE
 AWSTemplateFormatVersion: '2010-09-09'
-Transform: AWS::Serverless-2016-10-31
-Description: A simple backend (read/write to DynamoDB) with a RESTful API endpoint using Amazon API Gateway.
+Transform: 'AWS::Serverless-2016-10-31'
+Description: SAM project template
 
 Resources:
   retriever:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: "retriever"
+      FunctionName: retriever
       Handler: retriever.handler
       Runtime: nodejs12.x
       CodeUri: .
-      Description: A simple backend (read/write to DynamoDB) with a RESTful API endpoint using Amazon API Gateway.
-      MemorySize: 512
-      Timeout: 10
+      Description: Scans the DynamoDB table and returns results in response to API GET request.
       Policies:
       - DynamoDBCrudPolicy:
-          TableName: "transactions"
+          TableName: transactions
       Events:
-        Api1:
+        ApiGET:
           Type: Api
           Properties:
-            Path: /message
+            Path: /messages
             Method: GET
 
   transactionCreator:
     Type: AWS::Serverless::Function
     Properties:
-      FunctionName: "transaction_creator"
+      FunctionName: transaction_creator
+      Description: Polls the parsed_messages queue and writes data to DynamoDB table
       Handler: transaction_creator.handler
       Runtime: nodejs12.x
       CodeUri: .
@@ -37,34 +36,86 @@ Resources:
           PRIMARY_KEY: "uuid"
       Policies:
         - DynamoDBCrudPolicy:
-            TableName: "transactions"            
+            TableName: transactions
+      Events:
+        parsedMessagesSQS:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt ParsedMessages.Arn            
 
   hbProcessor:
-      Type: AWS::Serverless::Function
-      Properties:
-        FunctionName: "hb_processor"
-        Handler: hb_processor.handler
-        Runtime: nodejs12.x
-        CodeUri: .
-        Description: Periodically polls an SQS queue and asynchronously consumes each message.
-        MemorySize: 128
-        Timeout: 10
-        Policies:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: "hb_processor"
+      Description: Polls the hb_message_processing_queue, processes the message and sends it to parsed_messages queue.
+      Handler: hb_processor.handler
+      Runtime: nodejs12.x
+      CodeUri: .
+      Description: Periodically polls an SQS queue and asynchronously consumes each message.
+      Policies:
         - SQSPollerPolicy:
-            QueueName: "hb_message_processing_queue"
+            QueueName: hb_message_processing_queue
+      Events:
+        hbMessagesSQS:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt QueueHb.Arn
+
+  nlbProcessor:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: nlb_processor
+      Description: Polls the nlb_message_processing_queue, processes the message and sends it to parsed_messages queue.
+      Handler: nlb_processor.handler
+      Runtime: nodejs12.x
+      CodeUri: .
+      Description: Periodically polls an SQS queue and asynchronously consumes each message.
+      Policies:
+        - SQSPollerPolicy:
+            QueueName: nlb_message_processing_queue
+      Events:
+        hbMessagesSQS:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt QueueNlb.Arn
+
+  router:
+      Type: 'AWS::Serverless::Function'
+      Properties:
+        FunctionName: router
+        Description: Analyzes the incoming message on API and re-routes it depending on the content to one of the two queues.
+        Handler: router.handler
+        Runtime: nodejs12.x
+        CodeUri: .  
+        Policies:
+          - Version: '2012-10-17'
+            Statement:
+              - Effect: Allow
+                Action: 
+                  - 'sqs:GetQueueAttributes'
+                  - 'sqs:SendMessage'
+                Resource:
+                - !Join [":",[arn:aws:sqs, !Ref 'AWS::Region', !Ref 'AWS::AccountId', hb_message_processing_queue]]
+                - !Join [":",[arn:aws:sqs, !Ref 'AWS::Region', !Ref 'AWS::AccountId', nlb_message_processing_queue]]
+        Events:
+          transactionsApi:
+            Type: Api
+            Properties:
+              Path: /messages
+              Method: POST
 
   transactions:
     Type: AWS::DynamoDB::Table
     Properties:
-      TableName: "transactions"
+      TableName: transactions
       AttributeDefinitions:
         -
-          AttributeName: "uuid"
-          AttributeType: "S"
+          AttributeName: uuid
+          AttributeType: S
       KeySchema:
         -
-          AttributeName: "uuid"
-          KeyType: "HASH"
+          AttributeName: uuid
+          KeyType: HASH
       ProvisionedThroughput:
             ReadCapacityUnits: 1
             WriteCapacityUnits: 1
@@ -73,3 +124,15 @@ Resources:
     Type: AWS::SQS::Queue
     Properties: 
       QueueName: "hb_message_processing_queue"
+
+  QueueNlb:
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: "nlb_message_processing_queue"
+
+  ParsedMessages:
+    Type: AWS::SQS::Queue
+    Properties: 
+      QueueName: "parsed_messages"
+  
+  
